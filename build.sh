@@ -26,7 +26,7 @@ if [ "$1" = "build" ]; then
         DEFINES="-DDEBUG -DLOG_LEVEL=500"
     elif [ "$2" = "release" ]; then
         CFLAGS="-O3 -march=native -Wall -Wextra -Wpedantic -Werror -Wno-unused-function -Wno-unused-parameter"
-        DEFINES="-DLOG_LEVEL=300"
+        DEFINES="-DLOG_LEVEL=100"
     fi
 fi
 

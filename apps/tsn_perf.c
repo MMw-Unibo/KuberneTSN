@@ -160,6 +160,8 @@ void do_talker(struct app_config *config)
     char *message = (char *)malloc(msg_size);
     memset(message, 'a', msg_size);
 
+    int32_t *msg_cnt = (int32_t *)message;
+
     iov.iov_base = message;
     iov.iov_len = (size_t)msg_size;
 
@@ -188,12 +190,16 @@ void do_talker(struct app_config *config)
     int64_t txtime = (now_norm + (NSEC_PER_SEC * 2));
     int64_t wakeup_time = txtime - config->wakeup_delay;
 
+    fprintf(stderr, "now: %ld, now_norm: %ld, txtime: %ld, wakeup_time: %ld\n",
+            now, now_norm, txtime, wakeup_time);
+
     struct timespec sleep_ts =
         {
             .tv_sec = (wakeup_time / NSEC_PER_SEC),
             .tv_nsec = (wakeup_time % NSEC_PER_SEC)};
 
-    int counter = 0;
+    int counter = 1;
+    fprintf(stderr, "Starting talker\n");
     while (g_run && counter < nb_msgs)
     {
         clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &sleep_ts, NULL);
@@ -201,6 +207,8 @@ void do_talker(struct app_config *config)
         /* Update CMSG tx_timestamp and payload before sending */
         if (config->use_txtime)
             *((uint64_t *)CMSG_DATA(cmsg)) = txtime;
+
+        msg_cnt[0] = counter;
 
         int64_t send_time = kt_get_realtime_ns();
         ret = sendmsg(sockfd, &msg, 0);
@@ -211,7 +219,7 @@ void do_talker(struct app_config *config)
         else
         {
             if (config->verbose)
-                printf("%d, wakeup=%ld, txtime=%ld, send_time=%ld\n", counter, wakeup_time, txtime, send_time);
+                printf("%d, %ld, %ld, %ld\n", counter, wakeup_time, txtime, send_time);
 
             counter++;
         }
@@ -232,7 +240,7 @@ void do_listener(struct app_config *config)
     char msg[4096];
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
-    int64_t counter = 0;
+    int32_t counter = 0;
     while (g_run)
     {
         int ret = recvfrom(sockfd, msg, sizeof(msg), MSG_DONTWAIT, (struct sockaddr *)&addr, &addrlen);
@@ -243,8 +251,11 @@ void do_listener(struct app_config *config)
         else if (ret > 0)
         {
             int64_t now = kt_get_realtime_ns();
+
+            counter = *(int32_t *)msg;
+
             if (config->verbose)
-                printf("%ld, %ld\n", counter++, now);
+                printf("%d, %ld\n", counter++, now);
         }
     }
 }

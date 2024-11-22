@@ -127,8 +127,9 @@ static inline int port_init(uint16_t port_id, struct rte_mempool *mempool, uint1
     return 0;
 }
 
-static inline void prepare_packet(struct rte_mbuf *tx_buf, void *payload, size_t payload_size,
-                                  uint8_t *src_eth_addr, uint8_t *dst_eth_addr, uint32_t src_ip_addr, uint32_t dst_ip_addr, uint16_t dst_udp_port)
+static inline void prepare_packet(struct rte_mbuf *tx_buf, void *payload, struct kt_metadata *metadata)
+// size_t payload_size,
+//                                   uint8_t *src_eth_addr, uint8_t *dst_eth_addr, uint32_t src_ip_addr, uint32_t dst_ip_addr, uint16_t dst_udp_port)
 {
 
     // Get a pointer to the packet content (i.e., what will be actually put on the network)
@@ -136,50 +137,67 @@ static inline void prepare_packet(struct rte_mbuf *tx_buf, void *payload, size_t
 
     /* Ethernet header */
     struct rte_ether_hdr *ehdr = (struct rte_ether_hdr *)ptr;
-    memcpy((unsigned char *)ehdr->src_addr.addr_bytes, src_eth_addr, RTE_ETHER_ADDR_LEN);
-    memcpy((unsigned char *)ehdr->dst_addr.addr_bytes, dst_eth_addr, RTE_ETHER_ADDR_LEN);
-    ehdr->ether_type = htons(RTE_ETHER_TYPE_IPV4);
+    memcpy((unsigned char *)ehdr->src_addr.addr_bytes, metadata->eth_src, RTE_ETHER_ADDR_LEN);
+    memcpy((unsigned char *)ehdr->dst_addr.addr_bytes, metadata->eth_dst, RTE_ETHER_ADDR_LEN);
 
-    /* IP header.
-     * Randomly chosen IP addresses. Again, correct IPs must be used in a real application */
-    struct rte_ipv4_hdr *ih = (struct rte_ipv4_hdr *)(ehdr + 1);
-    ih->dst_addr = rte_cpu_to_be_32(dst_ip_addr);
-    ih->src_addr = rte_cpu_to_be_32(src_ip_addr);
-    ih->version = IPV4;
-    ih->ihl = 0x05;
-    ih->type_of_service = 0;
-    ih->total_length = rte_cpu_to_be_16(sizeof(struct rte_ipv4_hdr) + RTE_ETHER_ADDR_LEN + 2 + payload_size);
-    ih->fragment_offset = 0x0000;
-    ih->time_to_live = 64;
-    ih->next_proto_id = IP_UDP;
-    ih->hdr_checksum = 0x0000;
-    ih->packet_id = rte_cpu_to_be_16(ih->packet_id);
+    if (metadata->transport == KT_METADATA_TRANSPORT_UDP)
+    {
+        ehdr->ether_type = htons(RTE_ETHER_TYPE_IPV4);
 
-    // Checksum
-    ih->hdr_checksum = rte_ipv4_cksum(ih);
+        /* IP header.
+         * Randomly chosen IP addresses. Again, correct IPs must be used in a real application */
+        struct rte_ipv4_hdr *ih = (struct rte_ipv4_hdr *)(ehdr + 1);
+        ih->dst_addr = rte_cpu_to_be_32(metadata->ip_dst);
+        ih->src_addr = rte_cpu_to_be_32(metadata->ip_src);
+        ih->version = IPV4;
+        ih->ihl = 0x05;
+        ih->type_of_service = 0;
+        ih->total_length = rte_cpu_to_be_16(sizeof(struct rte_ipv4_hdr) + RTE_ETHER_ADDR_LEN + 2 + metadata->size);
+        ih->fragment_offset = 0x0000;
+        ih->time_to_live = 64;
+        ih->next_proto_id = IP_UDP;
+        ih->hdr_checksum = 0x0000;
+        ih->packet_id = rte_cpu_to_be_16(ih->packet_id);
 
-    /* UDP */
-    struct rte_udp_hdr *uh = (struct rte_udp_hdr *)(ih + 1);
-    uh->dst_port = rte_cpu_to_be_16(dst_udp_port);
-    uh->src_port = rte_cpu_to_be_16(SRC_PORT);
-    uh->dgram_len = rte_cpu_to_be_16(sizeof(struct rte_udp_hdr) + payload_size);
-    uh->dgram_cksum = 0;
+        // Checksum
+        ih->hdr_checksum = rte_ipv4_cksum(ih);
 
-    /* Copy payload content. This copy could be avoided with the DPDK external memory API.
-     * In this prototype we do not use it, as payloads are expected to be small. Contact us
-     * in case you need more info about that option, which we used for other works.
-     */
-    char *body = (char *)(uh + 1);
-    memcpy(body, payload, payload_size);
+        /* UDP */
+        struct rte_udp_hdr *uh = (struct rte_udp_hdr *)(ih + 1);
+        uh->dst_port = rte_cpu_to_be_16(metadata->udp_dport);
+        uh->src_port = rte_cpu_to_be_16(SRC_PORT);
+        uh->dgram_len = rte_cpu_to_be_16(sizeof(struct rte_udp_hdr) + metadata->size);
+        uh->dgram_cksum = 0;
 
-    /* Fill mbuf metadata.
-     * ATTENTION: these are really important. Packets won't be sent if the length is not set
-     * correctly, as the driver uses this info to tell the NIC what to send. The difference between
-     * data and packet length is relevant only in case of fragmentation, as well as the next and
-     * nb_segs fields which are used to create chains of mbufs (see documentation).
-     */
-    tx_buf->data_len = tx_buf->pkt_len =
-        RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr) + payload_size;
+        /* Copy payload content. This copy could be avoided with the DPDK external memory API.
+         * In this prototype we do not use it, as payloads are expected to be small. Contact us
+         * in case you need more info about that option, which we used for other works.
+         */
+        char *body = (char *)(uh + 1);
+        memcpy(body, payload, metadata->size);
+
+        /* Fill mbuf metadata.
+         * ATTENTION: these are really important. Packets won't be sent if the length is not set
+         * correctly, as the driver uses this info to tell the NIC what to send. The difference between
+         * data and packet length is relevant only in case of fragmentation, as well as the next and
+         * nb_segs fields which are used to create chains of mbufs (see documentation).
+         */
+        tx_buf->data_len = tx_buf->pkt_len =
+            RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_udp_hdr) + metadata->size;
+    } else {
+        // ehdr->ether_type = htons(RTE_ETHER_TYPE_VLAN);
+
+        // struct rte_vlan_hdr *vh = (struct rte_vlan_hdr *)(ehdr + 1);
+        // // set vlan id 8 and priority 3 and ether type UADP
+        // vh->vlan_tci = rte_cpu_to_be_16(0x6008);
+        // vh->eth_proto = rte_cpu_to_be_16(0xb62c);
+
+        // char *body = (char *)(vh + 1); 
+        memcpy(ptr, payload, metadata->size);
+
+        tx_buf->data_len = tx_buf->pkt_len = metadata->size;        
+    }
+
     tx_buf->next = NULL;
     tx_buf->nb_segs = 1;
 }
@@ -322,29 +340,29 @@ int main(int argc, char *argv[])
             /*
              * CASE 1: diff > tx_delta_ns
              *  - Don't send the packet and wait for the next iteration
-             * 
+             *
              * ^
              * |    now
              * |     |                       txtime
              * |     |     |<-- tx_delta_ns -->|
              * |_____|_____|___________________|________> time
-             * 
+             *
              * CASE 2: diff < 0
              *  - Packet lost
-             * 
+             *
              * ^
              * |                                    now
              * |                            txtime  |
              * |          |<-- tx_delta_ns -->|     |
              * |__________|___________________|_____|___> time
-             * 
+             *
              * CASE 3: 0 <= diff <= tx_delta_ns
              *  - Send the packet
-             * 
+             *
              * ^
-             * |               now                     
-             * |               |              txtime  
-             * |          |<-- | tx_delta_ns -->|     
+             * |               now
+             * |               |              txtime
+             * |          |<-- | tx_delta_ns -->|
              * |__________|___ |________________|________> time
              */
 
@@ -379,7 +397,7 @@ int main(int argc, char *argv[])
             LOG_DEBUG("DPDK: sending packet of size %d\n", metadata->size);
 
             /* Fill the first packet with headers and payload */
-            prepare_packet(tx_buf, mbuf->data, metadata->size, metadata->eth_src, metadata->eth_dst, metadata->ip_src, metadata->ip_dst, metadata->dport);
+            prepare_packet(tx_buf, mbuf->data, metadata);
 
             /* Send the packet on the network */
             // i64 send_time = kt_get_realtime_ns();

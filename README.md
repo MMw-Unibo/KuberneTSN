@@ -176,7 +176,7 @@ When start the container, the TSN scheduler is started automatically using the f
 To build the image for TSN Perf application run:
 
 ```bash
-docker image build --network=host -t kubetsn/tsn-perf .
+docker image build --network=host -f Dockerfile.perf -t kubetsn/tsn-perf .
 ```
 
 Then run the container with:

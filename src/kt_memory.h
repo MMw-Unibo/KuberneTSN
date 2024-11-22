@@ -40,13 +40,17 @@ struct kt_mbuf {
     u8 data[2048];
 };
 
+#define KT_METADATA_TRANSPORT_ETHERNET 0x0001
+#define KT_METADATA_TRANSPORT_UDP 0x0002
+
 struct kt_metadata {
+    u16 transport;
     u64 txtime;
     u8 eth_src[6];
     u8 eth_dst[6];
     u32 ip_src;
     u32 ip_dst;
-    u16 dport;
+    u16 udp_dport;
     size_t size;
 };
 

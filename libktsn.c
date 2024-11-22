@@ -36,6 +36,7 @@
 
 static const u8 kt_default_src_mac[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static const u8 kt_default_dst_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const u8 kt_multicast_mac[] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0x01};
 // static const u8 kt_default_dst_mac[] = {0xca, 0x15, 0xc5, 0x53, 0x24, 0x72};
 
 struct kt_socket
@@ -43,6 +44,7 @@ struct kt_socket
     int fd;     // file descriptor of the socket
     int prio;   // priority of the socket
     int txtime; // flag to indicate if socket is using SO_TXTIME
+    int domain; // domain of the socket
 
     LIST_ENTRY(kt_socket)
     list; /* List */
@@ -144,6 +146,18 @@ struct kt_interface *kt_interface_get_by_net(struct sockaddr_in *addr)
     return NULL;
 }
 
+struct kt_interface *kt_interface_find_by_mac(u8 *mac)
+{
+    struct kt_interface *iface;
+    LIST_FOREACH(iface, &g_interface_list, list)
+    {
+        if (memcmp(iface->mac, mac, 6) == 0)
+            return iface;
+    }
+
+    return NULL;
+}
+
 static int (*__start_main)(int (*main)(int, char **, char **), int argc,
                            char **ubp_av, void (*init)(void),
                            void (*fini)(void), void (*rtld_fini)(void),
@@ -194,6 +208,11 @@ int socket(int domain, int type, int protocol)
     if (fd < 0)
         return fd;
 
+    LOG_TRACE("socket fd=%d\n", fd);
+
+    if (domain == PF_PACKET)
+        LOG_TRACE("socket domain=PF_PACKET\n");
+
     // check if socket exists
     struct kt_socket *node = kt_socket_find(fd);
     if (!node)
@@ -202,6 +221,7 @@ int socket(int domain, int type, int protocol)
         node->fd = fd;
         node->prio = -1;
         node->txtime = 0;
+        node->domain = domain;
 
         LIST_INSERT_HEAD(&g_socket_list, node, list);
     }
@@ -212,15 +232,19 @@ int setsockopt(int fd, int level, int optname,
 {
     if (level == SOL_SOCKET)
     {
+        LOG_DEBUG("setsockopt SOL_SOCKET fd=%d level=%d optname=%d\n", fd, level, optname);
+
         switch (optname)
         {
         case SO_TXTIME:
         {
-            if (optlen != sizeof(uint64_t))
-            {
-                errno = EINVAL;
-                return -1;
-            }
+            // if (optlen != sizeof(uint64_t))
+            // {
+            //     errno = EINVAL;
+            //     return -1;
+            // }
+
+            LOG_DEBUG("setsockopt SO_TXTIME fd=%d\n", fd);
 
             struct kt_socket *node = kt_socket_find(fd);
             if (!node)
@@ -241,11 +265,13 @@ int setsockopt(int fd, int level, int optname,
         }
         case SO_PRIORITY:
         {
-            if (optlen != sizeof(int))
-            {
-                errno = EINVAL;
-                return -1;
-            }
+            LOG_DEBUG("setsockopt SO_PRIORITY fd=%d\n", fd);
+
+            // if (optlen != sizeof(int))
+            // {
+            //     errno = EINVAL;
+            //     return -1;
+            // }
 
             struct kt_socket *node = kt_socket_find(fd);
             if (!node)
@@ -270,10 +296,108 @@ int setsockopt(int fd, int level, int optname,
     return default_setsockopt(fd, level, optname, optval, optlen);
 }
 
+static ssize_t sendmsg_inet(int sockfd, const struct msghdr *msg, int flags, u64 txtime)
+{
+    struct sockaddr_in *addr = (struct sockaddr_in *)msg->msg_name;
+    struct kt_interface *interface = kt_interface_get_by_net(addr);
+    if (!interface)
+    {
+        LOG_TRACE("sendmsg: interface not found\n");
+        return default_sendmsg(sockfd, msg, flags);
+    }
+
+    u64 mbuf_index[1];
+    u32 nb_free = kt_ringbuf_dequeue_burst(g_free_ring, &mbuf_index, sizeof(u64), 1, NULL);
+    if (nb_free == 0)
+    {
+        LOG_TRACE("sendmsg: no free slots\n");
+        return -ENOBUFS;
+    }
+
+    // TODO(garbu): handle this in a better way?
+    u64 index = mbuf_index[0];
+
+    LOG_TRACE("sendmsg: using index %lu\n", index);
+
+    size_t size = msg->msg_iov[0].iov_len;
+    struct kt_mbuf *mbuf = (g_mbuf_pool + index);
+    memcpy(mbuf->data, msg->msg_iov[0].iov_base, size);
+
+    struct kt_metadata *metadata = (g_metadata_pool + index);
+    metadata->txtime = txtime;
+    metadata->size = size;
+    memcpy(metadata->eth_src, interface->mac, 6);
+    memcpy(metadata->eth_dst, kt_default_dst_mac, 6);
+    metadata->ip_dst = ntohl(addr->sin_addr.s_addr);
+    metadata->ip_src = ntohl(interface->addr.sin_addr.s_addr);
+    metadata->udp_dport = ntohs(addr->sin_port);
+    metadata->transport = KT_METADATA_TRANSPORT_UDP;
+
+    // enqueue the packet
+    u32 nb_enqueued = kt_ringbuf_enqueue_burst(g_tx_ring, &mbuf_index, sizeof(u64), 1, NULL);
+    if (nb_enqueued != 1)
+    {
+        LOG_TRACE("sendmsg: failed to enqueue packet\n");
+        return -ENOBUFS;
+    }
+
+    return size;
+}
+
+static ssize_t sendmsg_packet(int sockfd, const struct msghdr *msg, int flags, u64 txtime)
+{
+    struct sockaddr_ll *addr = (struct sockaddr_ll *)msg->msg_name;
+    struct kt_interface *interface = kt_interface_find(addr->sll_ifindex);
+    if (!interface)
+    {
+        LOG_TRACE("sendmsg: interface not found\n");
+        return default_sendmsg(sockfd, msg, flags);
+    }
+
+    u64 mbuf_index[1];
+    u32 nb_free = kt_ringbuf_dequeue_burst(g_free_ring, &mbuf_index, sizeof(u64), 1, NULL);
+    if (nb_free == 0)
+    {
+        LOG_TRACE("sendmsg: no free slots\n");
+        return -ENOBUFS;
+    }
+
+    // TODO(garbu): handle this in a better way?
+    u64 index = mbuf_index[0];
+
+    LOG_TRACE("sendmsg: using index %lu\n", index);
+
+    size_t size = msg->msg_iov[0].iov_len;
+    struct kt_mbuf *mbuf = (g_mbuf_pool + index);
+    memcpy(mbuf->data, msg->msg_iov[0].iov_base, size);
+
+    struct kt_metadata *metadata = (g_metadata_pool + index);
+    metadata->txtime = txtime;
+    metadata->size = size;
+    metadata->transport = KT_METADATA_TRANSPORT_ETHERNET;
+    memcpy(metadata->eth_src, interface->mac, 6);
+    memcpy(metadata->eth_dst, kt_multicast_mac, 6);
+
+    // enqueue the packet
+    u32 nb_enqueued = kt_ringbuf_enqueue_burst(g_tx_ring, &mbuf_index, sizeof(u64), 1, NULL);
+    if (nb_enqueued != 1)
+    {
+        LOG_TRACE("sendmsg: failed to enqueue packet\n");
+        return -ENOBUFS;
+    }
+
+    return size;
+}
+
 ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
 {
+    static i64 counter = 1;
+    i64 now = kt_get_realtime_ns();
+
     // get the socket
     struct kt_socket *node = kt_socket_find(sockfd);
+    LOG_DEBUG("sendmsg: socket %d\n", sockfd);
+
     if (!node)
     {
         LOG_TRACE("sendmsg: socket not found\n");
@@ -307,49 +431,19 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
         return default_sendmsg(sockfd, msg, flags);
     }
 
-    struct sockaddr_in *addr = (struct sockaddr_in *)msg->msg_name;
-    struct kt_interface *interface = kt_interface_get_by_net(addr);
-    if (!interface)
+    LOG_TRACE("sendmsg: txtime %lu\n", txtime);
+
+    switch (node->domain)
     {
-        LOG_TRACE("sendmsg: interface not found\n");
-        return default_sendmsg(sockfd, msg, flags);
-    }
-
-    u64 mbuf_index[1];
-    u32 nb_free = kt_ringbuf_dequeue_burst(g_free_ring, &mbuf_index, sizeof(u64), 1, NULL);
-    if (nb_free == 0)
+    case PF_PACKET:
     {
-        LOG_TRACE("sendmsg: no free slots\n");
-        return -ENOBUFS;
+        return sendmsg_packet(sockfd, msg, flags, txtime);
     }
-
-    // TODO(garbu): handle this in a better way?
-    u64 index = mbuf_index[0];
-
-    LOG_TRACE("sendmsg: using index %lu\n", index);
-
-    size_t size = msg->msg_iov[0].iov_len;
-    struct kt_mbuf *mbuf = (g_mbuf_pool + index);
-    memcpy(mbuf->data, msg->msg_iov[0].iov_base, size);
-
-    struct kt_metadata *metadata = (g_metadata_pool + index);
-    metadata->txtime = txtime;
-    metadata->size = size;
-    memcpy(metadata->eth_src, interface->mac, 6);
-    memcpy(metadata->eth_dst, kt_default_dst_mac, 6);
-    metadata->ip_dst = ntohl(addr->sin_addr.s_addr);
-    metadata->ip_src = ntohl(interface->addr.sin_addr.s_addr);
-    metadata->dport = ntohs(addr->sin_port);
-
-    // enqueue the packet
-    u32 nb_enqueued = kt_ringbuf_enqueue_burst(g_tx_ring, &mbuf_index, sizeof(u64), 1, NULL);
-    if (nb_enqueued != 1)
+    case AF_INET:
     {
-        LOG_TRACE("sendmsg: failed to enqueue packet\n");
-        return -ENOBUFS;
+        return sendmsg_inet(sockfd, msg, flags, txtime);
     }
-
-    return size;
+    }
 }
 
 static int free_socket(int fd)
