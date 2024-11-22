@@ -9,11 +9,13 @@
 Please cite our work if you use KuberneTSN in your research:
 
 ```bibtex
-@article{kubernetsn,
-  title={KuberneTSN: a Deterministic Overlay Network for Time-Sensitive Containerized Environments},
+@INPROCEEDINGS{kubernetsn,
   author={Garbugli, Andrea and Rosa, Lorenzo and Bujari, Armir and Foschini, Luca},
-  journal={arXiv preprint arXiv:2302.08398},
-  year={2023}
+  booktitle={ICC 2023 - IEEE International Conference on Communications}, 
+  title={KuberneTSN: a Deterministic Overlay Network for Time-Sensitive Containerized Environments}, 
+  year={2023},
+  pages={1494-1499},
+  doi={10.1109/ICC45041.2023.10279214}
 }
 ```
 
