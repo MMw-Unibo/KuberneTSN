@@ -123,7 +123,7 @@ To setup the network we need to create the following bridges:
 we can use the following commands:
 
 ```bash
-sudo ovs-vsctl add-br br-int -- set Bridge br-phy datapath_type=netdev
+sudo ovs-vsctl add-br br-int -- set Bridge br-int datapath_type=netdev
 sudo ovs-vsctl add-br br-phy -- set Bridge br-phy datapath_type=netdev
 ```
 
