@@ -1,0 +1,30 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: tsncni
+  namespace: default
+spec:
+  config: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "tsncni",
+      "type": "tsncni",
+      "logFile": "/var/log/tsncni.log",
+      "logLevel": "debug",
+      "OvsBridge": "br-int",
+      "ProvisionOvs": false,
+      "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [
+            {
+              "subnet": "192.168.100.0/24",
+              "gateway": "192.168.100.2",
+              "rangeStart": "192.168.100.10",
+              "rangeEnd": "192.168.100.200"
+            }
+          ]
+        ],
+        "dataDir": "/var/lib/cni/host-local"
+      }
+    }
