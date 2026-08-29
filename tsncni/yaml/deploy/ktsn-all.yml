@@ -1,0 +1,101 @@
+# Versione Nodo1: ktsnd + tsperf e Nodo2: tsperf  per test PTP
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ktsnd-app
+  annotations:
+    k8s.v1.cni.cncf.io/networks: '[{"name": "flannel"}, {"name": "tsncni"}]'
+  labels:
+    app: ktsnd-app
+spec:
+  containers:
+  - name: ktsnd
+    image: andreab1081/ktsnd:ktsnd
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: dev-shm
+    - mountPath: /dev/hugepages
+      name: dev-hugepages
+    - mountPath: /var/run/openvswitch
+      name: var-run-openvswitch
+    resources:
+      limits:
+        cpu: "1"
+        hugepages-2Mi: 1024Mi
+        memory: 1024Mi
+      requests:
+        cpu: "1"
+        memory: 1024Mi
+    env:
+    - name: NO_NETWORK
+      value: "true"
+  - name: tsn-perf-n1
+    image: andreab1081/ktsnd:tsn-perf
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash"]
+    tty: true
+    resources:
+      limits:
+        cpu: "2"
+      requests:
+        cpu: "2"
+    env:
+    - name: NETWORK_TYPE
+      value: "flannel,tsncni"
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: dev-shm
+      mountPath: /dev/shm
+  volumes:
+  - name: dev-shm
+    emptyDir:
+      medium: Memory
+  - name: dev-hugepages
+    emptyDir:
+      medium: HugePages
+  - name: var-run-openvswitch
+    hostPath:
+      path: /var/run/openvswitch
+      type: Directory
+  nodeSelector:
+    kubernetes.io/hostname: node1
+
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tsn-app-n2
+  annotations:
+    k8s.v1.cni.cncf.io/networks: flannel, tsncni
+  labels:
+    app: tsn-app-n2
+spec:
+  containers:
+  - name: tsn-perf-n2
+    image: andreab1081/ktsnd:tsn-perf
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash"]
+    tty: true
+    resources:
+      limits:
+        cpu: "2"
+      requests:
+        cpu: "2"
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: dev-shm
+      mountPath: /dev/shm
+  volumes:
+  - name: dev-shm
+    hostPath:
+      path: /dev/shm
+      type: Directory
+  nodeSelector:
+    kubernetes.io/hostname: node2
+

@@ -1,0 +1,81 @@
+node1:~# ./InitScript.sh
+
+vm.nr_hugepages = 2048
+Configured nr_hugepages = HugePages_Total:    2048
+DPDK initialized? true
+
+Network devices using DPDK-compatible driver
+============================================
+0000:00:13.0 'Virtio network device 1000' drv=vfio-pci unused=
+
+Network devices using kernel driver
+===================================
+0000:00:12.0 'Virtio network device 1000' if=ens18 drv=virtio-pci unused=vfio-pci *Active*
+0000:00:14.0 'Virtio network device 1000' if=ens20 drv=virtio-pci unused=vfio-pci *Active*
+0000:00:15.0 'Virtio network device 1000' if=ens21 drv=virtio-pci unused=vfio-pci
+
+No 'Baseband' devices detected
+==============================
+
+No 'Crypto' devices detected
+============================
+
+No 'DMA' devices detected
+=========================
+
+No 'Eventdev' devices detected
+==============================
+
+No 'Mempool' devices detected
+=============================
+
+No 'Compress' devices detected
+==============================
+
+No 'Misc (rawdev)' devices detected
+===================================
+
+No 'Regex' devices detected
+===========================
+
+No 'ML' devices detected
+========================
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+FileHugePages:         0 kB
+HugePages_Total:    2048
+HugePages_Free:     1010
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:         4194304 kB
+=== OVS Bridges ===
+4f20a059-1f27-4aac-b266-1f19b2cea14f
+    Bridge br-phy
+        datapath_type: netdev
+        Port br-phy
+            Interface br-phy
+                type: internal
+        Port dpdk0
+            Interface dpdk0
+                type: dpdk
+                options: {dpdk-devargs="0000:00:13.0"}
+    Bridge br-int
+        datapath_type: netdev
+        Port vhost-user0
+            Interface vhost-user0
+                type: dpdkvhostuser
+        Port br-int
+            Interface br-int
+                type: internal
+        Port vxlan0
+            Interface vxlan0
+                type: vxlan
+                options: {dst_port="4789", key="500", local_ip="10.0.10.11", remote_ip="10.0.10.12"}
+    ovs_version: "3.0.1"
+
+=== OVS Flows br-int ===
+ cookie=0x0, duration=0.531s, table=0, n_packets=1, n_bytes=90, priority=0 actions=NORMAL
+
+=== OVS Flows br-phy ===
+ cookie=0x0, duration=0.525s, table=0, n_packets=3, n_bytes=174, priority=0 actions=NORMAL
